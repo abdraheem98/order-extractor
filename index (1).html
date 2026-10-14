@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Flipkart Order ID Extractor</title>
+<style>
+*{box-sizing:border-box}body{margin:0;padding:22px;background:#f4f7fb;color:#1e293b;font:16px "Segoe UI",Arial,sans-serif}.wrap{max-width:760px;margin:auto}h1{margin:0 0 8px;color:#174a7b;font-size:27px}.muted{color:#64748b;font-size:14px}.card{background:white;border:1px solid #dce5ef;border-radius:12px;padding:20px;margin-top:16px}.upload{border:2px dashed #a7bdd5;background:#f8fbff;border-radius:10px;padding:22px;text-align:center}input{max-width:100%}button{border:0;border-radius:8px;padding:11px 15px;background:#155eaa;color:#fff;font-weight:600;cursor:pointer;margin:8px 7px 0 0}button.secondary{background:#e7eef6;color:#17324f}button:disabled{opacity:.5;cursor:not-allowed}.status{margin-top:14px;background:#eef5ff;border-radius:8px;padding:11px;white-space:pre-wrap}.count{font-size:17px;font-weight:700;margin:16px 0 8px}.ids{width:100%;min-height:240px;padding:12px;border:1px solid #cbd5e1;border-radius:8px;font:14px Consolas,monospace;resize:vertical}.review{font-size:13px;color:#8a4b08;margin-top:12px;white-space:pre-wrap}.small{font-size:13px;color:#64748b;margin-top:12px} @media(max-width:600px){body{padding:10px}.card{padding:14px}h1{font-size:23px}}
+</style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+</head>
+<body><main class="wrap">
+<h1>Flipkart Order ID Extractor</h1>
+<p class="muted">Upload PDFs, extract the Order IDs, then copy them or download an Excel file.</p>
+<section class="card">
+<div class="upload">
+<p><strong>Select one or more shipping-label PDFs</strong></p>
+<input id="pdfs" type="file" accept=".pdf,application/pdf" multiple>
+<br><button id="extract">Extract Order IDs</button>
+</div>
+<div id="status" class="status">Ready. Select your PDF file(s).</div>
+<div class="count">Order IDs found: <span id="count">0</span></div>
+<textarea id="results" class="ids" placeholder="Extracted Order IDs will appear here, one per line." spellcheck="false"></textarea>
+<div>
+<button id="copy" disabled>Copy IDs</button>
+<button id="download" disabled>Download Excel</button>
+<button id="txt" class="secondary" disabled>Download TXT</button>
+</div>
+<div id="review" class="review"></div>
+<p class="small">PDF text is processed in your browser, not uploaded to a server. Internet is needed to load the PDF and Excel libraries. Scanned PDFs may need OCR and will be flagged if no IDs are detected.</p>
+</section>
+</main>
+<script>
+(()=> {
+ const $=id=>document.getElementById(id);
+ let ids=[], reviews=[];
+ const re=/\bOD\d{18}\b/gi;
+ if(window.pdfjsLib) pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+ function setBusy(b){$('extract').disabled=b}
+ $('extract').addEventListener('click',async()=>{
+   const files=[...$('pdfs').files];
+   if(!files.length){$('status').textContent='Please select one or more PDF files first.';return}
+   if(!window.pdfjsLib){$('status').textContent='PDF library did not load. Check your internet connection and refresh this page.';return}
+   ids=[];reviews=[];let seen=new Set(),pageCount=0;
+   setBusy(true);$('copy').disabled=true;$('download').disabled=true;$('txt').disabled=true;
+   $('results').value='';$('count').textContent='0';$('review').textContent='';
+   try{
+     for(let fi=0;fi<files.length;fi++){
+       const file=files[fi];$('status').textContent=`Processing ${file.name} (${fi+1} of ${files.length})…`;
+       let pdf;
+       try{pdf=await pdfjsLib.getDocument({data:await file.arrayBuffer()}).promise}
+       catch(e){reviews.push(`${file.name}: Could not open PDF`);continue}
+       for(let p=1;p<=pdf.numPages;p++){
+         $('status').textContent=`Processing ${file.name} — page ${p} of ${pdf.numPages}`;
+         try{
+           const page=await pdf.getPage(p),content=await page.getTextContent();
+           const text=content.items.map(x=>x.str).join(' ');
+           const found=[...new Set((text.match(re)||[]).map(x=>x.toUpperCase()))];
+           if(!found.length)reviews.push(`${file.name}, page ${p}: no Order ID found${text.trim()?'':' (possibly scanned/image-only)'}`);
+           for(const id of found){ids.push(id);seen.add(id)}
+         }catch(e){reviews.push(`${file.name}, page ${p}: could not read page`)}
+         pageCount++;
+       }
+     }
+     $('results').value=ids.join('\n');$('count').textContent=ids.length;
+     $('review').textContent=reviews.length?`Pages to check (${reviews.length}):\n${reviews.join('\n')}`:'No pages flagged. Please spot-check a few IDs.';
+     $('status').textContent=`Finished. ${files.length} PDF(s), ${pageCount} page(s), ${ids.length} Order ID occurrence(s), ${seen.size} unique ID(s).`;
+     $('copy').disabled=ids.length===0;$('download').disabled=ids.length===0;$('txt').disabled=ids.length===0;
+   }catch(e){$('status').textContent='Extraction failed: '+String(e)}
+   finally{setBusy(false)}
+ });
+ $('copy').addEventListener('click',async()=>{
+   try{await navigator.clipboard.writeText($('results').value);$('status').textContent='Order IDs copied to clipboard.'}
+   catch(e){$('results').focus();$('results').select();document.execCommand('copy');$('status').textContent='Copy attempted. If needed, press Ctrl+C with the IDs selected.'}
+ });
+ $('download').addEventListener('click',()=>{
+   if(!window.XLSX){$('status').textContent='Excel library did not load. Check internet and refresh.';return}
+   const data=ids.map((id,i)=>({'Order ID':id,'Occurrence':i+1}));
+   const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(data.length?data:[{'Order ID':''}]),'Order IDs');
+   XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet([['Unique Order IDs'],...Array.from(new Set(ids),x=>[x])]),'Unique IDs');
+   XLSX.writeFile(wb,'Flipkart_Order_IDs.xlsx');
+ });
+ $('txt').addEventListener('click',()=>{
+   const blob=new Blob([ids.join('\r\n')],{type:'text/plain;charset=utf-8'}),url=URL.createObjectURL(blob),a=document.createElement('a');
+   a.href=url;a.download='Flipkart_Order_IDs.txt';a.click();URL.revokeObjectURL(url);
+ });
+})();
+</script></body></html>
